@@ -15,16 +15,21 @@ require (
 	github.com/bitclout/core v0.0.0-00010101000000-000000000000
 	github.com/btcsuite/btcd v0.21.0-beta
 	github.com/btcsuite/btcutil v1.0.2
-	github.com/dgraph-io/badger/v3 v3.2011.1
+	github.com/dgraph-io/badger/v3 v3.2103.0
 	github.com/dgrijalva/jwt-go/v4 v4.0.0-preview1
 	github.com/fatih/structs v1.1.0
+	github.com/go-delve/delve v1.5.0 // indirect
 	github.com/go-pg/pg/v10 v10.10.0 // indirect
 	github.com/golang/glog v0.0.0-20210429001901-424d2337a529
 	github.com/gorilla/mux v1.8.0
 	github.com/h2non/bimg v1.1.5
+	github.com/kevinburke/go-types v0.0.0-20201208005256-aee49f568a20 // indirect
+	github.com/kevinburke/go.uuid v1.2.0 // indirect
+	github.com/kevinburke/rest v0.0.0-20210506044642-5611499aa33c // indirect
 	github.com/kevinburke/twilio-go v0.0.0-20210327194925-1623146bcf73
 	github.com/laser/go-merkle-tree v0.0.0-20180821204614-16c2f6ea4444
 	github.com/mitchellh/go-homedir v1.1.0
+	github.com/mmcloughlin/avo v0.0.0-20201105074841-5d2f697d268f // indirect
 	github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe
 	github.com/nyaruka/phonenumbers v1.0.69
 	github.com/pkg/errors v0.9.1
@@ -33,6 +38,9 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.1
 	github.com/stretchr/testify v1.7.0
+	github.com/ttacon/builder v0.0.0-20170518171403-c099f663e1c2 // indirect
+	github.com/ttacon/libphonenumber v1.2.1 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.0 // indirect
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.0.0-20210513164829-c07d793c2f9a // indirect
 	google.golang.org/api v0.46.0
