@@ -73,6 +73,12 @@ type Config struct {
 	// Global State
 	ExposeGlobalState bool
 	GlobalStateAPIUrl string
+
+	// Supply Monitoring Routine
+	RunSupplyMonitoringRoutine bool
+
+	// ID to tag node source
+	NodeSource uint64
 }
 
 func LoadConfig(coreConfig *coreCmd.Config) *Config {
@@ -162,5 +168,12 @@ func LoadConfig(coreConfig *coreCmd.Config) *Config {
 	// Global State
 	config.ExposeGlobalState = viper.GetBool("expose-global-state")
 	config.GlobalStateAPIUrl = viper.GetString("global-state-api-url")
+
+	// Supply Monitoring Routine
+	config.RunSupplyMonitoringRoutine = viper.GetBool("run-supply-monitoring-routine")
+
+	// Node source ID
+	config.NodeSource = viper.GetUint64("node-source")
+
 	return &config
 }
