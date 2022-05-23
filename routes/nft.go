@@ -238,6 +238,12 @@ func (fes *APIServer) CreateNFT(ww http.ResponseWriter, req *http.Request) {
 
 	nftFee := utxoView.GlobalParamsEntry.CreateNFTFeeNanos * uint64(requestData.NumCopies)
 
+	extraData, err := EncodeExtraDataMap(requestData.ExtraData)
+	if err != nil {
+		_AddBadRequestError(ww, fmt.Sprintf("CreateNFT: Problem encoding ExtraData: %v", err))
+		return
+	}
+
 	// Try and create the create NFT txn for the user.
 	txn, totalInput, changeAmount, fees, err := fes.blockchain.CreateCreateNFTTxn(
 		updaterPublicKeyBytes,
@@ -253,7 +259,7 @@ func (fes *APIServer) CreateNFT(ww http.ResponseWriter, req *http.Request) {
 		requestData.BuyNowPriceNanos,
 		additionalDESORoyaltiesPubKeyMap,
 		additionalCoinRoyaltiesPubKeyMap,
-		preprocessExtraData(requestData.ExtraData),
+		extraData,
 		requestData.MinFeeRateNanosPerKB, fes.backendServer.GetMempool(), additionalOutputs)
 	if err != nil {
 		_AddBadRequestError(ww, fmt.Sprintf("CreateNFT: Problem creating transaction: %v", err))
@@ -1253,8 +1259,20 @@ func (fes *APIServer) GetNFTCollectionSummary(ww http.ResponseWriter, req *http.
 
 	postEntryResponse.PostEntryReaderState = utxoView.GetPostEntryReaderState(readerPublicKeyBytes, postEntry)
 
-	nftKey := lib.MakeNFTKey(postEntry.PostHash, 1)
-	nftEntry := utxoView.GetNFTEntryForNFTKey(&nftKey)
+	// Attempt to get the nft entry details starting at SN 1, and continue to increment until a valid serial number is found.
+	// This routine is needed in order to account for burned NFTs.
+	var nftEntry *lib.NFTEntry
+	nftKeySN := uint64(1)
+	for nftEntry == nil && nftKeySN <= postEntry.NumNFTCopies {
+		nftKey := lib.MakeNFTKey(postEntry.PostHash, nftKeySN)
+		nftEntry = utxoView.GetNFTEntryForNFTKey(&nftKey)
+		nftKeySN += 1
+	}
+
+	if nftEntry == nil {
+		_AddBadRequestError(ww, fmt.Sprintf("GetNFTCollectionSummary: Could not find a valid Serial Number for the given NFT post hash."))
+		return
+	}
 
 	res := &GetNFTCollectionSummaryResponse{
 		NFTCollectionResponse:          fes._nftEntryToNFTCollectionResponse(nftEntry, postEntry.PosterPublicKey, postEntryResponse, utxoView, readerPKID),
@@ -1388,7 +1406,7 @@ func (fes *APIServer) _nftEntryToResponse(nftEntry *lib.NFTEntry, postEntryRespo
 		EncryptedUnlockableText:       encryptedUnlockableText,
 		LastOwnerPublicKeyBase58Check: lastOwnerPublicKeyBase58Check,
 		LastAcceptedBidAmountNanos:    nftEntry.LastAcceptedBidAmountNanos,
-		ExtraData:                     extraDataToResponse(nftEntry.ExtraData),
+		ExtraData:                     DecodeExtraDataMap(fes.Params, utxoView, nftEntry.ExtraData),
 	}
 }
 
@@ -2144,6 +2162,9 @@ func (fes *APIServer) GetAcceptedBidHistory(ww http.ResponseWriter, req *http.Re
 		}
 		var acceptedBidEntryResponses []*NFTBidEntryResponse
 		for _, acceptedBidEntry := range *acceptedBidEntries {
+			if acceptedBidEntry == nil {
+				continue
+			}
 			acceptedBidEntryResponses = append(acceptedBidEntryResponses,
 				fes._bidEntryToResponse(
 					acceptedBidEntry, nil, utxoView, false, false))

@@ -40,9 +40,10 @@ const (
 	RoutePathGetQuoteRecloutsForPost = "/api/v0/get-quote-reclouts-for-post" // Deprecated
 
 	// base.go
-	RoutePathHealthCheck     = "/api/v0/health-check"
-	RoutePathGetExchangeRate = "/api/v0/get-exchange-rate"
-	RoutePathGetAppState     = "/api/v0/get-app-state"
+	RoutePathHealthCheck      = "/api/v0/health-check"
+	RoutePathGetExchangeRate  = "/api/v0/get-exchange-rate"
+	RoutePathGetAppState      = "/api/v0/get-app-state"
+	RoutePathGetIngressCookie = "/api/v0/get-ingress-cookie"
 
 	// transaction.go
 	RoutePathGetTxn                   = "/api/v0/get-txn"
@@ -59,6 +60,9 @@ const (
 	RoutePathAuthorizeDerivedKey      = "/api/v0/authorize-derived-key"
 	RoutePathDAOCoin                  = "/api/v0/dao-coin"
 	RoutePathTransferDAOCoin          = "/api/v0/transfer-dao-coin"
+	RoutePathCreateDAOCoinLimitOrder  = "/api/v0/create-dao-coin-limit-order"
+	RoutePathCreateDAOCoinMarketOrder = "/api/v0/create-dao-coin-market-order"
+	RoutePathCancelDAOCoinLimitOrder  = "/api/v0/cancel-dao-coin-limit-order"
 	RoutePathAppendExtraData          = "/api/v0/append-extra-data"
 	RoutePathGetTransactionSpending   = "/api/v0/get-transaction-spending"
 
@@ -85,6 +89,10 @@ const (
 	RoutePathGetUserMetadata                            = "/api/v0/get-user-metadata"
 	RoutePathGetUsernameForPublicKey                    = "/api/v0/get-user-name-for-public-key"
 	RoutePathGetPublicKeyForUsername                    = "/api/v0/get-public-key-for-user-name"
+
+	// dao_coin_exchange.go
+	RoutePathGetDaoCoinLimitOrders           = "/api/v0/get-dao-coin-limit-orders"
+	RoutePathGetTransactorDaoCoinLimitOrders = "/api/v0/get-transactor-dao-coin-limit-orders"
 
 	// post.go
 	RoutePathGetPostsStateless      = "/api/v0/get-posts-stateless"
@@ -192,6 +200,7 @@ const (
 	RoutePathAdminGetVerifiedUsers                 = "/api/v0/admin/get-verified-users"
 	RoutePathAdminGetUsernameVerificationAuditLogs = "/api/v0/admin/get-username-verification-audit-logs"
 	RoutePathAdminGetUserAdminData                 = "/api/v0/admin/get-user-admin-data"
+	RoutePathAdminResetPhoneNumber                 = "/api/v0/admin/reset-phone-number"
 
 	// admin_feed.go
 	RoutePathAdminUpdateGlobalFeed = "/api/v0/admin/update-global-feed"
@@ -303,10 +312,26 @@ type APIServer struct {
 	// Base-58 prefix to check for to determine if a string could be a public key.
 	PublicKeyBase58Prefix string
 
-	// A list of posts from the last 24hrs ordered by hotness score.
+	// A list of posts from the specified look-back period ordered by hotness score.
 	HotFeedOrderedList []*HotFeedEntry
+	// A map version of HotFeedOrderedList mapping each post to its hotness score for the tag feed and post age.
+	HotFeedPostHashToTagScoreMap map[lib.BlockHash]*HotnessPostInfo
+	// An in-memory map from post hash to post tags. This is used to cache tags to prevent hot feed algorithm from
+	// continuously parsing the text body from already processed posts.
+	PostHashToPostTagsMap map[lib.BlockHash][]string
+	// An in-memory map from post tag to post hash. This allows us to
+	// quickly get all the posts for a particular group.
+	// This is represented as a map of strings to a set of post hashes. A set is used instead of an array to allow for
+	// quicker de-duplication checks.
+	PostTagToPostHashesMap map[string]map[lib.BlockHash]bool
+	// For each tag, store ordered slice of post hashes based on hot feed ranking.
+	PostTagToOrderedHotFeedEntries map[string][]*HotFeedEntry
+	// For each tag, store ordered slice of post hashes based on newness.
+	PostTagToOrderedNewestEntries map[string][]*HotFeedEntry
 	// The height of the last block evaluated by the hotness routine.
 	HotFeedBlockHeight uint32
+	// A cache to store blocks for the block feed - in order to reduce processing time.
+	HotFeedBlockCache map[lib.BlockHash]*lib.MsgDeSoBlock
 	// Map of whitelisted post hashes used for serving the hot feed.
 	// The float64 value is a multiplier than can be modified and used in scoring.
 	HotFeedApprovedPostsToMultipliers             map[lib.BlockHash]float64
@@ -317,7 +342,10 @@ type APIServer struct {
 	LastHotFeedPKIDMultiplierOpProcessedTstampNanos uint64
 	// Constants for the hotness score algorithm.
 	HotFeedInteractionCap        uint64
+	HotFeedTagInteractionCap     uint64
 	HotFeedTimeDecayBlocks       uint64
+	HotFeedTagTimeDecayBlocks    uint64
+	HotFeedTxnTypeMultiplierMap  map[lib.TxnType]uint64
 	HotFeedPostMultiplierUpdated bool
 	HotFeedPKIDMultiplierUpdated bool
 
@@ -348,8 +376,12 @@ type APIServer struct {
 	// responding to requests for this node's graylist. A JSON-encoded response is easier for any language to digest
 	// than a gob-encoded one.
 	GraylistedResponseMap map[string][]byte
-	// GlobalFeedPostHashes is a slice of BlockHashes representing the state of posts on the global feed on this node.
+	// GlobalFeedPostHashes is a slice of BlockHashes representing an ordered state of post hashes on the global feed on
+	// this node.
 	GlobalFeedPostHashes []*lib.BlockHash
+	// GlobalFeedPostEntries is a slice of PostEntries representing an ordered state of PostEntries on the global feed
+	// on this node. It is computed from the GlobalFeedPostHashes above.
+	GlobalFeedPostEntries []*lib.PostEntry
 
 	// Cache of Total Supply and Rich List
 	TotalSupplyNanos  uint64
@@ -855,6 +887,27 @@ func (fes *APIServer) NewRouter() *muxtrace.Router {
 			PublicAccess,
 		},
 		{
+			"CreateDAOCoinLimitOrder",
+			[]string{"POST", "OPTIONS"},
+			RoutePathCreateDAOCoinLimitOrder,
+			fes.CreateDAOCoinLimitOrder,
+			PublicAccess,
+		},
+		{
+			"CreateDAOCoinMarketOrder",
+			[]string{"POST", "OPTIONS"},
+			RoutePathCreateDAOCoinMarketOrder,
+			fes.CreateDAOCoinMarketOrder,
+			PublicAccess,
+		},
+		{
+			"CancelDAOCoinLimitOrder",
+			[]string{"POST", "OPTIONS"},
+			RoutePathCancelDAOCoinLimitOrder,
+			fes.CancelDAOCoinLimitOrder,
+			PublicAccess,
+		},
+		{
 			"AppendExtraData",
 			[]string{"POST", "OPTIONS"},
 			RoutePathAppendExtraData,
@@ -894,6 +947,13 @@ func (fes *APIServer) NewRouter() *muxtrace.Router {
 			[]string{"POST", "OPTIONS"},
 			RoutePathGetAppState,
 			fes.GetAppState,
+			PublicAccess,
+		},
+		{
+			"GetIngressCookie",
+			[]string{"GET"},
+			RoutePathGetIngressCookie,
+			fes.GetIngressCookie,
 			PublicAccess,
 		},
 		{
@@ -1013,6 +1073,20 @@ func (fes *APIServer) NewRouter() *muxtrace.Router {
 			[]string{"GET"},
 			RoutePathGetPublicKeyForUsername + "/{username:[a-zA-Z0-9_]{1,26}",
 			fes.GetPublicKeyForUsername,
+			PublicAccess,
+		},
+		{
+			"GetDAOCoinLimitOrders",
+			[]string{"POST", "OPTIONS"},
+			RoutePathGetDaoCoinLimitOrders,
+			fes.GetDAOCoinLimitOrders,
+			PublicAccess,
+		},
+		{
+			"GetTransactorDAOCoinLimitOrders",
+			[]string{"POST", "OPTIONS"},
+			RoutePathGetTransactorDaoCoinLimitOrders,
+			fes.GetTransactorDAOCoinLimitOrders,
 			PublicAccess,
 		},
 		// Jumio Routes
@@ -1444,6 +1518,13 @@ func (fes *APIServer) NewRouter() *muxtrace.Router {
 			[]string{"POST", "OPTIONS"},
 			RoutePathAdminGetExemptPublicKeys,
 			fes.AdminGetExemptPublicKeys,
+			SuperAdminAccess,
+		},
+		{
+			"AdminResetPhoneNumber",
+			[]string{"POST", "OPTIONS"},
+			RoutePathAdminResetPhoneNumber,
+			fes.AdminResetPhoneNumber,
 			SuperAdminAccess,
 		},
 		// End all /admin routes
@@ -2137,7 +2218,7 @@ func (fes *APIServer) SetGlobalStateCache() {
 	fes.SetVerifiedUsernameMap()
 	fes.SetBlacklistedPKIDMap(utxoView)
 	fes.SetGraylistedPKIDMap(utxoView)
-	fes.SetGlobalFeedPostHashes()
+	fes.SetGlobalFeedPostHashes(utxoView)
 	fes.SetAllCountrySignUpBonusMetadata()
 	fes.SetUSDCentsToDeSoReserveExchangeRateFromGlobalState()
 	fes.SetBuyDeSoFeeBasisPointsResponseFromGlobalState()
@@ -2180,12 +2261,14 @@ func (fes *APIServer) SetGraylistedPKIDMap(utxoView *lib.UtxoView) {
 	}
 }
 
-func (fes *APIServer) SetGlobalFeedPostHashes() {
-	postHashes, err := fes.GetGlobalFeedCache()
+func (fes *APIServer) SetGlobalFeedPostHashes(utxoView *lib.UtxoView) {
+	postHashes, postEntries, err := fes.GetGlobalFeedCache(utxoView)
+
 	if err != nil {
 		glog.Errorf("SetGlobalFeedPostHashes: Error getting global feed post hashes: %v", err)
 	} else {
 		fes.GlobalFeedPostHashes = postHashes
+		fes.GlobalFeedPostEntries = postEntries
 	}
 }
 

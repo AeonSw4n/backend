@@ -1,17 +1,12 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	"github.com/deso-protocol/backend/config"
 	coreCmd "github.com/deso-protocol/core/cmd"
+	"github.com/golang/glog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-
-	"github.com/golang/glog"
 )
 
 // runCmd represents the run command
@@ -23,19 +18,20 @@ var runCmd = &cobra.Command{
 }
 
 func Run(cmd *cobra.Command, args []string) {
+	shutdownListener := make(chan struct{})
+
 	// Start the core node
 	coreConfig := coreCmd.LoadConfig()
 	coreNode := coreCmd.NewNode(coreConfig)
-	coreNode.Start()
+	coreNode.Start(&shutdownListener)
 
 	// Start the backend node
 	nodeConfig := config.LoadConfig(coreConfig)
 	node := NewNode(nodeConfig, coreNode)
 	node.Start()
 
-	shutdownListener := make(chan os.Signal)
-	signal.Notify(shutdownListener, syscall.SIGINT, syscall.SIGTERM)
 	defer func() {
+		coreNode.Stop()
 		node.Stop()
 		glog.Info("Shutdown complete")
 	}()
@@ -76,6 +72,10 @@ func init() {
 	runCmd.PersistentFlags().Uint64("min-satoshis-for-profile", 50000,
 		"Users won't be able to create a profile unless they buy this "+
 			"amount of satoshis or provide a phone number.")
+	// How many times can a phone number be used to receive starter DESO.
+	runCmd.PersistentFlags().Uint64("phone-number-use-threshold", 10, "A phone number will "+
+		"be allowed to be used this many times to receive starter DESO. Set this to a higher value "+
+		"if you want users to be able to create multiple accounts more easily.")
 
 	// Global State
 	runCmd.PersistentFlags().String("global-state-remote-node", "",

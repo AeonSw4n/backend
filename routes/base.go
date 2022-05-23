@@ -32,9 +32,22 @@ func (fes *APIServer) HealthCheck(ww http.ResponseWriter, rr *http.Request) {
 		return
 	}
 
-	// Check that we've received our first transaction bundle.
-	if !fes.backendServer.HasProcessedFirstTransactionBundle() {
+	// Check that we've received our first transaction bundle. We skip this check
+	// if we've disabled networking, since in that case we shouldn't expect to get
+	// any mempool messages from our peers.
+	if !fes.backendServer.HasProcessedFirstTransactionBundle() &&
+		!fes.backendServer.DisableNetworking {
 		_AddBadRequestError(ww, "Waiting on mempool to sync")
+		return
+	}
+
+	// If we have txindex configured then also do a check for that.
+	if fes.TXIndex != nil &&
+		fes.TXIndex.TXIndexChain.ChainState() != lib.SyncStateFullyCurrent {
+		txindexHeight := fes.TXIndex.TXIndexChain.BlockTip().Height
+
+		_AddBadRequestError(ww, fmt.Sprintf("Waiting for txindex to sync. "+
+			"Height: %v, SyncState: %v", txindexHeight, fes.TXIndex.TXIndexChain.ChainState()))
 		return
 	}
 
@@ -399,6 +412,25 @@ func (fes *APIServer) GetAppState(ww http.ResponseWriter, req *http.Request) {
 
 	if err = json.NewEncoder(ww).Encode(res); err != nil {
 		_AddBadRequestError(ww, fmt.Sprintf("GetNotifications: Problem encoding response as JSON: %v", err))
+		return
+	}
+}
+
+type GetIngressCookieResponse struct {
+	CookieValue string
+}
+
+// This route allows a client to get the cookie set by nginx for session affinity.
+// This value can then be passed to a backend to ensure that all requests a user
+// is making are being handled by the same machine.
+func (fes *APIServer) GetIngressCookie(ww http.ResponseWriter, req *http.Request) {
+	cookie, err := req.Cookie("INGRESSCOOKIE")
+	if err != nil {
+		_AddBadRequestError(ww, fmt.Sprintf("GetIngressCookie: Error getting ingress cookie: %v", err))
+		return
+	}
+	if err = json.NewEncoder(ww).Encode(&GetIngressCookieResponse{CookieValue: cookie.Value}); err != nil {
+		_AddBadRequestError(ww, fmt.Sprintf("GetIngressCookie: Problem encoding response as JSON: %v", err))
 		return
 	}
 }
